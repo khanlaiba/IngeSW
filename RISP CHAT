@@ -1,0 +1,110 @@
+### Perché serve una classe `Periodo`
+
+Nel documento compaiono **almeno due “intervalli temporali” diversi**:
+
+1. *Periodo dell’anno* in cui un **TipoVisita** è programmabile (es: 2 gennaio – 31 maggio)&#x20;
+2. *Finestra operativa* che va “dal giorno 16 di un mese al giorno 15 del mese successivo” per varie attività gestionali&#x20;
+
+Avere un value-object dedicato evita di ripetere controlli e consente di **riusare la stessa logica** quando, nelle versioni 2-4, dovrai gestire disponibilità dei volontari, periodi di iscrizione, ecc.
+
+---
+
+## Proposta di design
+
+```java
+/**
+ * Value-object immutabile che rappresenta un intervallo di date *inclusivo*.
+ * Le istanze si creano solo tramite i metodi factory.
+ */
+public final class Periodo implements Serializable, Comparable<Periodo> {
+
+    private final LocalDate inizio;   // inclusa
+    private final LocalDate fine;     // inclusa
+
+    /* ---------- Costruzione ---------- */
+
+    private Periodo(LocalDate inizio, LocalDate fine) {
+        this.inizio = inizio;
+        this.fine   = fine;
+    }
+
+    /**
+     * Crea un periodo [inizio, fine].
+     * @throws IllegalArgumentException se inizio è dopo fine
+     */
+    public static Periodo of(LocalDate inizio, LocalDate fine) {
+        Objects.requireNonNull(inizio);
+        Objects.requireNonNull(fine);
+        if (inizio.isAfter(fine))
+            throw new IllegalArgumentException("inizio dopo fine");
+        return new Periodo(inizio, fine);
+    }
+
+    /**
+     * Crea un “periodo annuale ricorrente” (es. 02/01 – 31/05) usando solo
+     * giorno e mese. Il flag wrap indica se l’intervallo attraversa il 31 Dic.
+     */
+    public static Periodo ricorrente(MonthDay from, MonthDay to, int yearHint) {
+        LocalDate start = from.atYear(yearHint);
+        LocalDate end   = to.atYear(yearHint + (from.isAfter(to) ? 1 : 0));
+        return of(start, end);
+    }
+
+    /* ---------- Query utili ---------- */
+
+    public boolean contiene(LocalDate data) {
+        return !data.isBefore(inizio) && !data.isAfter(fine);
+    }
+
+    public boolean sovrappone(Periodo other) {
+        return !other.fine.isBefore(inizio) && !other.inizio.isAfter(fine);
+    }
+
+    public Optional<Periodo> intersezione(Periodo other) {
+        if (!sovrappone(other)) return Optional.empty();
+        return Optional.of(of(
+            inizio.isAfter(other.inizio) ? inizio : other.inizio,
+            fine.isBefore(other.fine)     ? fine   : other.fine
+        ));
+    }
+
+    public long durataGiorni() {
+        return ChronoUnit.DAYS.between(inizio, fine) + 1;
+    }
+
+    /* ---------- Boilerplate ---------- */
+
+    // getters, equals, hashCode, toString(), compareTo…
+}
+```
+
+### Scelte progettuali
+
+| Decisione                                                        | Motivo                                                      | Possibili estensioni                                        |
+| ---------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
+| **Immutabilità**                                                 | evita bug da aliasing, rende thread-safe                    | nessuna modifica per aggiungere cache o condividere istanze |
+| **LocalDate**                                                    | già sufficiente per V1 e future serializzazioni             | si può sostituire con `OffsetDateTime` se servirà il fuso   |
+| **Inclusività** dei capi                                         | più intuitiva per “periodo 2 gen – 31 mag”                  | se servisse un modello \[start, end) basta cambiare i test  |
+| **Factory `ricorrente()`**                                       | gestisce l’intervallo “senza anno” usato dai tipi di visita | puoi aggiungere un flag per periodi “solo mese/anno”        |
+| **Metodi di utilità** (`contiene`, `sovrappone`, `intersezione`) | eviti duplicazioni nei servizi che faranno i controlli      | altri: `unisci(Periodo)`, `split(int days)`                 |
+
+---
+
+### Dove inserirla nell’architettura
+
+* **Package**: `it.unibs.visite.domain.time` (o simile)
+* **Dipendenze**: solo Java Time → la classe resta pura e testabile.
+* **Pattern**: è un *Value Object*; quindi:
+
+  * override di `equals` e `hashCode` basato su (`inizio`, `fine`)
+  * implementa `Comparable<Periodo>` ordinando per `inizio`.
+
+---
+
+### Vantaggi futuri
+
+* **Disponibilità volontario**: un volontario potrebbe esprimere periodi “non disponibili”; basterà salvare una lista di `Periodo`.
+* **Preclusione date**: il configuratore seleziona `LocalDate`; potrai riunirle in un `Periodo` se diventano contigue.
+* **Storico visite**: potrai recuperare rapidamente le visite effettuate in un dato intervallo usando `sovrappone()`.
+
+Con questa impostazione la classe è già pronta per i casi d’uso di V1 e non richiederà refactoring quando il progetto crescerà.
