@@ -8,4 +8,13 @@ public class Data {
 		this.giorno = giorno;
 		this.mese = mese;
 	}
+
+	public int getGiorno() {
+		return giorno;
+	}
+
+	public int getMese() {
+		return mese;
+	}
+	
 }
