@@ -1,7 +1,5 @@
 package Versione1;
 
 public enum TipoStrada {
-    VIA,
-    VIALE,
-    PIAZZA
+	Via, Viale, Vicolo, Strada, Corso, Piazza, Località; 
 }
